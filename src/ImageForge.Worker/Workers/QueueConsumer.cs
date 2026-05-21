@@ -2,31 +2,38 @@ using System.Text;
 using System.Text.Json;
 using ImageForge.Shared.Contracts;
 using ImageForge.Shared.Messaging;
+using ImageForge.Shared.Persistence;
 using ImageForge.Worker.Services;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
+// Disambiguate from System.Threading.Tasks.TaskStatus.
+using TaskStatus = ImageForge.Shared.Contracts.TaskStatus;
+
 namespace ImageForge.Worker.Workers;
 
 // Long-running consumer registered as a HostedService. Connects to RabbitMQ,
 // subscribes to the task queue and processes messages one at a time per worker.
-// On success: ack the message. On failure: nack without requeue (would loop).
+// Updates the per-task status in Redis as it goes: processing -> done/failed.
 public sealed class QueueConsumer : BackgroundService
 {
     private readonly ILogger<QueueConsumer> _logger;
     private readonly RabbitMqOptions _options;
     private readonly ImageProcessor _processor;
+    private readonly TaskStatusStore _statusStore;
     private IConnection? _connection;
     private IModel? _channel;
 
     public QueueConsumer(
         IOptions<RabbitMqOptions> options,
         ImageProcessor processor,
+        TaskStatusStore statusStore,
         ILogger<QueueConsumer> logger)
     {
         _options = options.Value;
         _processor = processor;
+        _statusStore = statusStore;
         _logger = logger;
     }
 
@@ -38,8 +45,6 @@ public sealed class QueueConsumer : BackgroundService
             Port = _options.Port,
             UserName = _options.User,
             Password = _options.Password,
-            // Required so AsyncEventingBasicConsumer fires Received on the
-            // async pump rather than the regular thread pool.
             DispatchConsumersAsync = true
         };
 
@@ -88,7 +93,23 @@ public sealed class QueueConsumer : BackgroundService
 
             _logger.LogInformation("Received task {TaskId}, starting processing", message.TaskId);
 
-            await _processor.ProcessAsync(message, CancellationToken.None);
+            // Flip status to "processing" so a GET right now shows the user
+            // we have actually picked up their task.
+            await _statusStore.SetAsync(new TaskStatus(
+                TaskId: message.TaskId,
+                State: TaskState.Processing,
+                Progress: 0,
+                ResultPath: null,
+                Error: null));
+
+            var resultPath = await _processor.ProcessAsync(message, CancellationToken.None);
+
+            await _statusStore.SetAsync(new TaskStatus(
+                TaskId: message.TaskId,
+                State: TaskState.Done,
+                Progress: 100,
+                ResultPath: resultPath,
+                Error: null));
 
             _channel!.BasicAck(ea.DeliveryTag, multiple: false);
         }
@@ -97,8 +118,27 @@ public sealed class QueueConsumer : BackgroundService
             _logger.LogError(ex,
                 "Failed to process task {TaskId} (delivery {DeliveryTag})",
                 message?.TaskId ?? "<unknown>", ea.DeliveryTag);
-            // Do not requeue: malformed inputs or unsupported formats would loop forever.
-            // Persistent status with "failed" lands in M5.
+
+            if (message is not null)
+            {
+                // Record the failure so the user sees it via GET instead of
+                // an infinite "pending"/"processing".
+                try
+                {
+                    await _statusStore.SetAsync(new TaskStatus(
+                        TaskId: message.TaskId,
+                        State: TaskState.Failed,
+                        Progress: 0,
+                        ResultPath: null,
+                        Error: ex.Message));
+                }
+                catch (Exception statusEx)
+                {
+                    _logger.LogError(statusEx, "Also failed to write 'failed' status for {TaskId}", message.TaskId);
+                }
+            }
+
+            // Do not requeue: malformed inputs would loop forever.
             _channel!.BasicNack(ea.DeliveryTag, multiple: false, requeue: false);
         }
     }

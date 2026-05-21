@@ -1,6 +1,9 @@
 using ImageForge.Api.Endpoints;
 using ImageForge.Api.Services;
 using ImageForge.Shared.Messaging;
+using ImageForge.Shared.Persistence;
+using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,10 +11,24 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddSingleton<ImageStorage>();
 
+// RabbitMQ
 builder.Services
     .AddOptions<RabbitMqOptions>()
     .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
 builder.Services.AddSingleton<QueuePublisher>();
+
+// Redis: single connection multiplexer for the whole process,
+// the store wraps it and handles serialization + key prefixing.
+builder.Services
+    .AddOptions<RedisOptions>()
+    .Bind(builder.Configuration.GetSection(RedisOptions.SectionName));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<RedisOptions>>().Value);
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+{
+    var opts = sp.GetRequiredService<RedisOptions>();
+    return ConnectionMultiplexer.Connect(opts.ConnectionString);
+});
+builder.Services.AddSingleton<TaskStatusStore>();
 
 var app = builder.Build();
 

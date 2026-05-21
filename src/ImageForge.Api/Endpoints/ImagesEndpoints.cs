@@ -1,5 +1,6 @@
 using ImageForge.Api.Services;
 using ImageForge.Shared.Contracts;
+using ImageForge.Shared.Persistence;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 
@@ -18,7 +19,7 @@ public static class ImagesEndpoints
              .DisableAntiforgery() // multipart upload without an HTML form / token
              .WithName("UploadImage");
 
-        group.MapGet("/{taskId}", GetStatus)
+        group.MapGet("/{taskId}", GetStatusAsync)
              .WithName("GetImageStatus");
 
         return routes;
@@ -30,6 +31,7 @@ public static class ImagesEndpoints
         [FromForm] IFormFile file,
         ImageStorage storage,
         QueuePublisher publisher,
+        TaskStatusStore statusStore,
         CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -47,30 +49,34 @@ public static class ImagesEndpoints
             await file.CopyToAsync(output, ct);
         }
 
+        // Seed the status in Redis BEFORE publishing so a GET right after the
+        // POST sees "pending" instead of 404 (no race window).
+        await statusStore.SetAsync(new TaskStatus(
+            TaskId: taskId,
+            State: TaskState.Pending,
+            Progress: 0,
+            ResultPath: null,
+            Error: null));
+
         // Publish the work item; the worker will pick it up asynchronously.
-        // Target format and max dimension will become user-configurable in M6.
         publisher.Publish(new TaskMessage(
             TaskId: taskId,
             SourcePath: sourcePath,
             TargetFormat: "webp",
             MaxDimension: 1920));
 
-        // Status persistence in Redis lands in M5.
         return TypedResults.Ok(new UploadResponse(taskId));
     }
 
     // GET /api/images/{taskId}
-    // M2 stub: always returns "pending". Real status comes from Redis in M5.
-    private static Ok<TaskStatus> GetStatus(string taskId)
+    // Reads the current snapshot from Redis. 404 if the task id is unknown
+    // (never uploaded, or status expired).
+    private static async Task<Results<Ok<TaskStatus>, NotFound>> GetStatusAsync(
+        string taskId,
+        TaskStatusStore statusStore)
     {
-        var status = new TaskStatus(
-            TaskId: taskId,
-            State: TaskState.Pending,
-            Progress: 0,
-            ResultPath: null,
-            Error: null);
-
-        return TypedResults.Ok(status);
+        var status = await statusStore.GetAsync(taskId);
+        return status is null ? TypedResults.NotFound() : TypedResults.Ok(status);
     }
 }
 
