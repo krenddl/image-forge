@@ -29,6 +29,7 @@ public static class ImagesEndpoints
     private static async Task<Results<Ok<UploadResponse>, BadRequest<string>>> UploadAsync(
         [FromForm] IFormFile file,
         ImageStorage storage,
+        QueuePublisher publisher,
         CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -39,14 +40,22 @@ public static class ImagesEndpoints
         // Compact, URL-safe id; uniqueness is enough for both Redis key and filename.
         var taskId = Guid.NewGuid().ToString("N");
         var extension = Path.GetExtension(file.FileName);
-        var targetPath = storage.BuildUploadPath(taskId, extension);
+        var sourcePath = storage.BuildUploadPath(taskId, extension);
 
-        await using (var output = File.Create(targetPath))
+        await using (var output = File.Create(sourcePath))
         {
             await file.CopyToAsync(output, ct);
         }
 
-        // Status persistence (Redis) and queue publishing land in later milestones.
+        // Publish the work item; the worker will pick it up asynchronously.
+        // Target format and max dimension will become user-configurable in M6.
+        publisher.Publish(new TaskMessage(
+            TaskId: taskId,
+            SourcePath: sourcePath,
+            TargetFormat: "webp",
+            MaxDimension: 1920));
+
+        // Status persistence in Redis lands in M5.
         return TypedResults.Ok(new UploadResponse(taskId));
     }
 
