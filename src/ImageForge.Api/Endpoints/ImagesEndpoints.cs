@@ -31,6 +31,12 @@ public static class ImagesEndpoints
         group.MapGet("/{taskId}", GetStatusAsync)
              .WithName("GetImageStatus");
 
+        group.MapGet("/{taskId}/result", GetResultAsync)
+             .WithName("GetImageResult");
+
+        group.MapGet("/{taskId}/source", GetSourceAsync)
+             .WithName("GetImageSource");
+
         return routes;
     }
 
@@ -119,6 +125,68 @@ public static class ImagesEndpoints
         var status = await statusStore.GetAsync(taskId);
         return status is null ? TypedResults.NotFound() : TypedResults.Ok(status);
     }
+
+    // GET /api/images/{taskId}/result
+    // Streams the processed file once it's ready. 404 while not done yet.
+    private static async Task<Results<FileStreamHttpResult, NotFound, BadRequest<string>>> GetResultAsync(
+        string taskId,
+        TaskStatusStore statusStore)
+    {
+        var status = await statusStore.GetAsync(taskId);
+        if (status is null)
+        {
+            return TypedResults.NotFound();
+        }
+        if (status.State != TaskState.Done || status.ResultPath is null)
+        {
+            return TypedResults.BadRequest($"Task is not done yet (state: {status.State}).");
+        }
+        if (!File.Exists(status.ResultPath))
+        {
+            return TypedResults.NotFound();
+        }
+
+        var stream = File.OpenRead(status.ResultPath);
+        var contentType = GuessContentType(status.ResultPath);
+        var fileName = Path.GetFileName(status.ResultPath);
+        return TypedResults.Stream(stream, contentType, fileName);
+    }
+
+    // GET /api/images/{taskId}/source
+    // Streams the originally uploaded file. Used by the before/after slider.
+    private static async Task<Results<FileStreamHttpResult, NotFound>> GetSourceAsync(
+        string taskId,
+        ImageStorage storage,
+        TaskStatusStore statusStore)
+    {
+        // We don't store the source path explicitly; find the upload by
+        // matching the taskId prefix. The uploads folder is small per task.
+        var status = await statusStore.GetAsync(taskId);
+        if (status is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var match = Directory
+            .EnumerateFiles(storage.UploadsDirectory, taskId + ".*")
+            .FirstOrDefault();
+        if (match is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var stream = File.OpenRead(match);
+        var contentType = GuessContentType(match);
+        return TypedResults.Stream(stream, contentType, Path.GetFileName(match));
+    }
+
+    private static string GuessContentType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".webp" => "image/webp",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        _ => "application/octet-stream"
+    };
 }
 
 public sealed record UploadResponse(string TaskId);

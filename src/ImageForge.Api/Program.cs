@@ -3,6 +3,7 @@ using ImageForge.Api.Hubs;
 using ImageForge.Api.Services;
 using ImageForge.Shared.Messaging;
 using ImageForge.Shared.Persistence;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
@@ -42,7 +43,19 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.MapGet("/", () => "ImageForge API is running");
+// Serve the vanilla frontend from the configured folder. Same-origin with
+// the API and SignalR hub, so no CORS dance.
+var frontendConfigured = builder.Configuration["Frontend:Path"] ?? "../../frontend";
+var frontendPath = Path.IsPathRooted(frontendConfigured)
+    ? frontendConfigured
+    : Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, frontendConfigured));
+if (Directory.Exists(frontendPath))
+{
+    var fileProvider = new PhysicalFileProvider(frontendPath);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
+    app.UseStaticFiles(new StaticFileOptions  { FileProvider = fileProvider });
+}
+
 app.MapImagesEndpoints();
 app.MapHub<TasksHub>("/hub/tasks");
 
