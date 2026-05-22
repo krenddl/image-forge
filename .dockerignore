@@ -1,0 +1,27 @@
+# Build outputs - we'll do a clean restore inside the image
+**/bin/
+**/obj/
+
+# Local IDE / settings
+**/.vs/
+**/.idea/
+**/.claude/
+**/*.user
+**/*.suo
+
+# Git
+.git/
+.gitignore
+
+# Runtime artifacts on the host
+storage/
+
+# Docker files themselves (not needed inside the build context)
+**/Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# Plan files / notes
+**/CLAUDE.md
+prototype_warm_soft.html

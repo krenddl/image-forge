@@ -1,0 +1,75 @@
+# Bring the whole stack up with: docker compose up --build
+# All four services share one private Docker network (created by compose)
+# so they reach each other by service name: api -> "rabbitmq" / "redis".
+# Only the API port is exposed to the host; the broker and store stay
+# private. The shared "storage" volume is the disk both api (uploads)
+# and worker (results) read and write to.
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      # Management UI on the host. AMQP port stays internal.
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    # No host port: 6379 is often taken by Memurai/other Redis on dev machines.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: src/ImageForge.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      # Override appsettings via env vars; "__" maps to the JSON nesting.
+      RabbitMq__Host: rabbitmq
+      Redis__ConnectionString: redis:6379
+      Storage__Root: /app/storage
+      Frontend__Path: /app/frontend
+    ports:
+      - "8080:8080"
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Reconnect if the broker is momentarily unreachable (e.g. AMQP port not
+    # quite open yet right after the healthcheck flips to healthy).
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: src/ImageForge.Worker/Dockerfile
+    environment:
+      RabbitMq__Host: rabbitmq
+      Redis__ConnectionString: redis:6379
+      Storage__Root: /app/storage
+    volumes:
+      - storage:/app/storage
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  storage:
