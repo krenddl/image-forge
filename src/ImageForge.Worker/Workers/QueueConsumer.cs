@@ -95,7 +95,7 @@ public sealed class QueueConsumer : BackgroundService
 
             // Flip status to "processing" so a GET right now shows the user
             // we have actually picked up their task.
-            await _statusStore.SetAsync(new TaskStatus(
+            await _statusStore.SetAndBroadcastAsync(new TaskStatus(
                 TaskId: message.TaskId,
                 State: TaskState.Processing,
                 Progress: 0,
@@ -107,7 +107,7 @@ public sealed class QueueConsumer : BackgroundService
             var taskIdLocal = message.TaskId;
             Func<int, Task> report = async percent =>
             {
-                await _statusStore.SetAsync(new TaskStatus(
+                await _statusStore.SetAndBroadcastAsync(new TaskStatus(
                     TaskId: taskIdLocal,
                     State: TaskState.Processing,
                     Progress: percent,
@@ -117,7 +117,7 @@ public sealed class QueueConsumer : BackgroundService
 
             var resultPath = await _processor.ProcessAsync(message, report, CancellationToken.None);
 
-            await _statusStore.SetAsync(new TaskStatus(
+            await _statusStore.SetAndBroadcastAsync(new TaskStatus(
                 TaskId: message.TaskId,
                 State: TaskState.Done,
                 Progress: 100,
@@ -138,7 +138,7 @@ public sealed class QueueConsumer : BackgroundService
                 // an infinite "pending"/"processing".
                 try
                 {
-                    await _statusStore.SetAsync(new TaskStatus(
+                    await _statusStore.SetAndBroadcastAsync(new TaskStatus(
                         TaskId: message.TaskId,
                         State: TaskState.Failed,
                         Progress: 0,

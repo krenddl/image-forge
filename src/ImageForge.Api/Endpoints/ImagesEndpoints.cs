@@ -93,8 +93,10 @@ public static class ImagesEndpoints
         }
 
         // Seed the status in Redis BEFORE publishing so a GET right after the
-        // POST sees "pending" instead of 404 (no race window).
-        await statusStore.SetAsync(new TaskStatus(
+        // POST sees "pending" instead of 404 (no race window). Broadcast it
+        // too so a client that has already subscribed to the SignalR group
+        // gets the initial "pending" snapshot.
+        await statusStore.SetAndBroadcastAsync(new TaskStatus(
             TaskId: taskId,
             State: TaskState.Pending,
             Progress: 0,

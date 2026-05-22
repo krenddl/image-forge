@@ -1,4 +1,5 @@
 using ImageForge.Api.Endpoints;
+using ImageForge.Api.Hubs;
 using ImageForge.Api.Services;
 using ImageForge.Shared.Messaging;
 using ImageForge.Shared.Persistence;
@@ -9,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSignalR();
 builder.Services.AddSingleton<ImageStorage>();
 
 // RabbitMQ
@@ -17,8 +19,7 @@ builder.Services
     .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
 builder.Services.AddSingleton<QueuePublisher>();
 
-// Redis: single connection multiplexer for the whole process,
-// the store wraps it and handles serialization + key prefixing.
+// Redis
 builder.Services
     .AddOptions<RedisOptions>()
     .Bind(builder.Configuration.GetSection(RedisOptions.SectionName));
@@ -30,6 +31,9 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 });
 builder.Services.AddSingleton<TaskStatusStore>();
 
+// Bridges Redis pub/sub -> SignalR.
+builder.Services.AddHostedService<TaskStatusBroadcaster>();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -40,5 +44,6 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/", () => "ImageForge API is running");
 app.MapImagesEndpoints();
+app.MapHub<TasksHub>("/hub/tasks");
 
 app.Run();

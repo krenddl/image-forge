@@ -12,4 +12,8 @@ public sealed class RedisOptions
     // Keys are prefixed so the Redis instance can be shared with other apps
     // without colliding on a flat "task:xyz" key.
     public string KeyPrefix { get; init; } = "imageforge:task:";
+
+    // Pub/Sub channel the worker pushes status snapshots to, and the API
+    // subscribes to in order to fan them out via SignalR.
+    public string StatusChannel { get; init; } = "imageforge:status";
 }
