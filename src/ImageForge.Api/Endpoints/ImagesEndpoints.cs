@@ -17,8 +17,16 @@ public static class ImagesEndpoints
         "webp", "jpg", "jpeg", "png"
     };
 
+    // MIME types that browsers / clients send for image uploads we support.
+    // "image/jpg" is non-standard but seen in the wild; accept it for kindness.
+    private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/jpeg", "image/jpg", "image/png", "image/webp"
+    };
+
     private const string DefaultFormat = "webp";
     private const int DefaultMaxDimension = 1920;
+    private const long MaxUploadBytes = 20L * 1024 * 1024; // 20 MB
 
     public static IEndpointRouteBuilder MapImagesEndpoints(this IEndpointRouteBuilder routes)
     {
@@ -26,25 +34,44 @@ public static class ImagesEndpoints
 
         group.MapPost("/", UploadAsync)
              .DisableAntiforgery()
-             .WithName("UploadImage");
+             .WithName("UploadImage")
+             // Swashbuckle 6.x cannot describe [FromForm] IFormFile in minimal
+             // APIs, so we hide the endpoint from Swagger UI while keeping it
+             // fully functional. The README documents the multipart shape.
+             .ExcludeFromDescription();
 
         group.MapGet("/{taskId}", GetStatusAsync)
-             .WithName("GetImageStatus");
+             .WithName("GetImageStatus")
+             .WithSummary("Get the current status snapshot for a task")
+             .Produces<TaskStatus>(StatusCodes.Status200OK)
+             .Produces(StatusCodes.Status404NotFound);
 
         group.MapGet("/{taskId}/result", GetResultAsync)
-             .WithName("GetImageResult");
+             .WithName("GetImageResult")
+             .WithSummary("Download the processed file once the task is done")
+             .Produces(StatusCodes.Status200OK)
+             .Produces(StatusCodes.Status400BadRequest)
+             .Produces(StatusCodes.Status404NotFound);
 
         group.MapGet("/{taskId}/source", GetSourceAsync)
-             .WithName("GetImageSource");
+             .WithName("GetImageSource")
+             .WithSummary("Download the originally uploaded file (for before/after view)")
+             .Produces(StatusCodes.Status200OK)
+             .Produces(StatusCodes.Status404NotFound);
 
         return routes;
     }
 
-    // POST /api/images
-    // multipart/form-data:
-    //   file          (required)  the image to process
-    //   format        (optional)  "webp" | "jpg" | "jpeg" | "png"   default: webp
-    //   maxDimension  (optional)  integer; 0 means no resize        default: 1920
+    /// <summary>
+    /// POST /api/images. Validates and stores the upload, seeds a "pending"
+    /// status in Redis, publishes a TaskMessage to RabbitMQ.
+    /// </summary>
+    /// <remarks>
+    /// Form fields:
+    ///   file          (required)  the image to process; jpeg/png/webp; max 20 MB
+    ///   format        (optional)  webp | jpg | jpeg | png        (default: webp)
+    ///   maxDimension  (optional)  pixels; 0 = no resize          (default: 1920)
+    /// </remarks>
     private static async Task<Results<Ok<UploadResponse>, BadRequest<string>>> UploadAsync(
         [FromForm] IFormFile file,
         [FromForm] string? format,
@@ -57,6 +84,18 @@ public static class ImagesEndpoints
         if (file is null || file.Length == 0)
         {
             return TypedResults.BadRequest("File is empty.");
+        }
+
+        if (file.Length > MaxUploadBytes)
+        {
+            return TypedResults.BadRequest(
+                $"File too large ({file.Length:N0} bytes). Max allowed: {MaxUploadBytes:N0} bytes.");
+        }
+
+        if (!AllowedContentTypes.Contains(file.ContentType ?? string.Empty))
+        {
+            return TypedResults.BadRequest(
+                $"Unsupported content type '{file.ContentType}'. Allowed: {string.Join(", ", AllowedContentTypes)}.");
         }
 
         // Normalize the format: trim, lowercase, default to webp.

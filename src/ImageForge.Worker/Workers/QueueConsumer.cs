@@ -7,6 +7,7 @@ using ImageForge.Worker.Services;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using SixLabors.ImageSharp;
 
 // Disambiguate from System.Threading.Tasks.TaskStatus.
 using TaskStatus = ImageForge.Shared.Contracts.TaskStatus;
@@ -134,8 +135,16 @@ public sealed class QueueConsumer : BackgroundService
 
             if (message is not null)
             {
-                // Record the failure so the user sees it via GET instead of
-                // an infinite "pending"/"processing".
+                // User-facing error message. Hide raw stack traces; classify
+                // common failure modes into something the UI can show.
+                var userMessage = ex switch
+                {
+                    UnknownImageFormatException => "The file is not a recognized image format.",
+                    InvalidImageContentException => "The image is corrupt or truncated.",
+                    NotSupportedException nse  => nse.Message,
+                    _                          => "Processing failed: " + ex.Message
+                };
+
                 try
                 {
                     await _statusStore.SetAndBroadcastAsync(new TaskStatus(
@@ -143,7 +152,7 @@ public sealed class QueueConsumer : BackgroundService
                         State: TaskState.Failed,
                         Progress: 0,
                         ResultPath: null,
-                        Error: ex.Message));
+                        Error: userMessage));
                 }
                 catch (Exception statusEx)
                 {

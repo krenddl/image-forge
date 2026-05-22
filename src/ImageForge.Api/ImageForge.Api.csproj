@@ -4,6 +4,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Emit XML doc so Swagger can show summaries/remarks on endpoints. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Don't warn about types/methods missing XML doc comments. -->
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
