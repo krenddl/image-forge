@@ -8,6 +8,13 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<script>
+  // Apply the saved theme before paint to avoid the light-then-dark flash.
+  try {
+    const t = localStorage.getItem('imageforge-theme');
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  } catch {}
+</script>
 </head>
 <body>
   <div class="wrap">
@@ -17,9 +24,15 @@
         <div class="wordmark">Forge<span class="dot">.</span></div>
         <div class="kicker">Image&nbsp;Pipeline</div>
       </div>
-      <div class="right">
-        IN QUEUE <b id="qcount">0</b> &nbsp;·&nbsp; COMPLETED <b id="dcount">0</b><br>
-        async · rabbitmq · redis
+      <div class="right" style="display:flex; align-items:flex-end; gap:0;">
+        <div>
+          IN QUEUE <b id="qcount">0</b> &nbsp;·&nbsp; COMPLETED <b id="dcount">0</b><br>
+          async · rabbitmq · redis
+        </div>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme">
+          <svg class="icon moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="icon sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        </button>
       </div>
     </div>
     <div class="rule"></div>
@@ -37,6 +50,18 @@
         </div>
       </div>
       <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" multiple hidden>
+
+      <!-- Staging area: files picked but not yet uploaded -->
+      <div class="staging" id="staging" hidden>
+        <div class="staging-head">
+          <span class="lbl"><span id="staging-count">0</span> file<span id="staging-plural">s</span> ready</span>
+          <div class="staging-actions">
+            <button class="chip-light" type="button" id="staging-cancel">cancel</button>
+            <button class="chip on"    type="button" id="staging-upload">upload &rarr;</button>
+          </div>
+        </div>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
 
       <div class="toolbar">
         <span class="lbl">Output</span>
@@ -87,6 +112,26 @@
           <div class="job">handed to a worker, not yet acknowledged</div>
         </div>
         <div class="pc" id="stat-inflight">—</div>
+      </div>
+    </div>
+
+    <div class="shead">
+      <span class="n">03</span>
+      <h2>Lifetime stats</h2>
+      <span class="meta">since the broker came up</span>
+    </div>
+    <div class="lifetime">
+      <div class="stat">
+        <span class="num" id="lt-processed">—</span>
+        <span class="lbl">files processed</span>
+      </div>
+      <div class="stat">
+        <span class="num" id="lt-saved">—</span>
+        <span class="lbl">data saved</span>
+      </div>
+      <div class="stat">
+        <span class="num" id="lt-ratio">—</span>
+        <span class="lbl">avg output / input</span>
       </div>
     </div>
 

@@ -42,6 +42,12 @@ $$('[data-sz]').forEach((btn) => {
 
 const drop  = $('#drop');
 const input = $('#file-input');
+const stagingEl = $('#staging');
+const thumbsEl  = $('#thumbs');
+
+// Files picked but not yet sent. Each entry: { file, url } where url
+// is an objectURL we revoke once the file leaves staging.
+let staged = [];
 
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => {
   e.preventDefault();
@@ -53,7 +59,7 @@ const input = $('#file-input');
 }));
 
 drop.addEventListener('drop', (e) => {
-  if (e.dataTransfer?.files?.length) uploadFiles(e.dataTransfer.files);
+  if (e.dataTransfer?.files?.length) stageFiles(e.dataTransfer.files);
 });
 
 drop.addEventListener('click', () => input.click());
@@ -61,9 +67,70 @@ drop.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
 });
 input.addEventListener('change', () => {
-  if (input.files?.length) uploadFiles(input.files);
+  if (input.files?.length) stageFiles(input.files);
   input.value = '';   // allow re-selecting the same file later
 });
+
+$('#staging-upload').addEventListener('click', () => uploadStaged());
+$('#staging-cancel').addEventListener('click', () => clearStaged());
+
+// Move picked files into the staging area. Builds thumbnail previews via
+// objectURLs so the browser doesn't read the bytes a second time.
+function stageFiles(fileList) {
+  for (const file of fileList) {
+    staged.push({ file, url: URL.createObjectURL(file) });
+  }
+  renderStaging();
+}
+
+function renderStaging() {
+  if (!staged.length) {
+    stagingEl.hidden = true;
+    thumbsEl.innerHTML = '';
+    return;
+  }
+  stagingEl.hidden = false;
+  $('#staging-count').textContent  = staged.length;
+  $('#staging-plural').textContent = staged.length === 1 ? '' : 's';
+
+  thumbsEl.innerHTML = '';
+  staged.forEach((item, i) => {
+    const sizeKb = (item.file.size / 1024).toFixed(0);
+    const label = sizeKb >= 1024
+      ? (item.file.size / (1024 * 1024)).toFixed(1) + ' MB'
+      : sizeKb + ' KB';
+
+    const el = document.createElement('div');
+    el.className = 'thumb';
+    el.innerHTML = `
+      <img alt="" loading="lazy">
+      <button class="x" type="button" aria-label="remove">×</button>
+      <div class="meta"></div>
+    `;
+    el.querySelector('img').src = item.url;
+    el.querySelector('.meta').textContent = `${item.file.name} · ${label}`;
+    el.querySelector('.x').addEventListener('click', (e) => {
+      e.stopPropagation();
+      URL.revokeObjectURL(staged[i].url);
+      staged.splice(i, 1);
+      renderStaging();
+    });
+    thumbsEl.appendChild(el);
+  });
+}
+
+async function uploadStaged() {
+  if (!staged.length) return;
+  const toUpload = staged.slice();   // snapshot
+  clearStaged();
+  await uploadFiles(toUpload.map((s) => s.file));
+}
+
+function clearStaged() {
+  staged.forEach((s) => URL.revokeObjectURL(s.url));
+  staged = [];
+  renderStaging();
+}
 
 // ---- SignalR connection -------------------------------------------------------
 
@@ -306,3 +373,51 @@ async function refreshStats() {
 }
 refreshStats();
 setInterval(refreshStats, 2000);
+
+// ---- Lifetime stats — poll every 5s -----------------------------------------
+
+async function refreshLifetime() {
+  try {
+    const res = await fetch(API_BASE + '/api/lifetime-stats');
+    if (!res.ok) return;
+    const { processed, bytesIn, bytesOut } = await res.json();
+
+    document.getElementById('lt-processed').textContent = formatNumber(processed);
+
+    const saved = bytesIn - bytesOut;
+    document.getElementById('lt-saved').textContent = saved > 0 ? formatBytes(saved) : '—';
+
+    const ratio = bytesIn > 0 ? Math.round((bytesOut / bytesIn) * 100) : 0;
+    const ratioEl = document.getElementById('lt-ratio');
+    ratioEl.textContent = bytesIn > 0 ? (ratio + '%') : '—';
+    ratioEl.classList.toggle('accent', bytesIn > 0);
+  } catch { /* best-effort */ }
+}
+
+function formatNumber(n) {
+  return n.toLocaleString('en-US');
+}
+
+function formatBytes(n) {
+  if (n >= 1024 * 1024 * 1024) return (n / (1024 ** 3)).toFixed(2) + ' GB';
+  if (n >= 1024 * 1024)        return (n / (1024 ** 2)).toFixed(1) + ' MB';
+  if (n >= 1024)               return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+
+refreshLifetime();
+setInterval(refreshLifetime, 5000);
+
+// ---- Theme toggle ------------------------------------------------------------
+
+const themeBtn = $('#theme-toggle');
+themeBtn?.addEventListener('click', () => {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  if (next === 'dark') {
+    html.setAttribute('data-theme', 'dark');
+  } else {
+    html.removeAttribute('data-theme');
+  }
+  try { localStorage.setItem('imageforge-theme', next); } catch {}
+});
