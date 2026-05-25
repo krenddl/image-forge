@@ -70,6 +70,15 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # Cap each replica at one host CPU. ImageSharp is single-threaded
+    # inside the worker (MaxDegreeOfParallelism=1 in Program.cs), so one
+    # core is exactly what a replica needs; this safeguard makes sure
+    # we don't oversubscribe the host even if that setting drifts.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
 volumes:
   storage:

@@ -14,5 +14,8 @@ obj/
 # Runtime artifacts
 storage/
 
+# Load-test downloaded image pack (picsum.photos)
+test-pack/
+
 # Logs
 *.log
