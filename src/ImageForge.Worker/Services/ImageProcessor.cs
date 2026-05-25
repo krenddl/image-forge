@@ -30,6 +30,14 @@ public sealed class ImageProcessor
     {
         // 25% — file opened and decoded into memory.
         using var image = await Image.LoadAsync(message.SourcePath, ct);
+
+        // Apply EXIF orientation BEFORE any further work. Phone cameras store
+        // landscape pixels with an orientation tag telling viewers "rotate 90
+        // / 180 / 270 when displaying". WebP doesn't preserve EXIF reliably,
+        // so we bake the rotation into the pixels themselves; the exported
+        // file will be visually correct regardless of consumer EXIF support.
+        image.Mutate(x => x.AutoOrient());
+
         await reportProgress(25);
 
         var originalWidth = image.Width;

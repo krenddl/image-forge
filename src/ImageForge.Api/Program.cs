@@ -66,6 +66,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     return ConnectionMultiplexer.Connect(opts.ConnectionString);
 });
 builder.Services.AddSingleton<TaskStatusStore>();
+builder.Services.AddSingleton<LifetimeStats>();
 
 // Bridges Redis pub/sub -> SignalR.
 builder.Services.AddHostedService<TaskStatusBroadcaster>();
@@ -100,5 +101,12 @@ app.MapHub<TasksHub>("/hub/tasks");
 // Lightweight stats endpoint for the worker-fleet UI.
 app.MapGet("/api/stats", async (QueueStatsClient stats, CancellationToken ct)
     => Results.Ok(await stats.GetAsync(ct)));
+
+// Lifetime counters: total tasks processed and bytes in vs bytes out.
+app.MapGet("/api/lifetime-stats", async (LifetimeStats stats) =>
+{
+    var snapshot = await stats.GetAsync();
+    return Results.Ok(snapshot);
+});
 
 app.Run();

@@ -23,6 +23,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     return ConnectionMultiplexer.Connect(opts.ConnectionString);
 });
 builder.Services.AddSingleton<TaskStatusStore>();
+builder.Services.AddSingleton<LifetimeStats>();
 
 builder.Services.AddSingleton<WorkerStorage>();
 builder.Services.AddSingleton<ImageProcessor>();

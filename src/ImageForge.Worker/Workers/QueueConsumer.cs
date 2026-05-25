@@ -23,6 +23,7 @@ public sealed class QueueConsumer : BackgroundService
     private readonly RabbitMqOptions _options;
     private readonly ImageProcessor _processor;
     private readonly TaskStatusStore _statusStore;
+    private readonly LifetimeStats _lifetimeStats;
     private IConnection? _connection;
     private IModel? _channel;
 
@@ -30,11 +31,13 @@ public sealed class QueueConsumer : BackgroundService
         IOptions<RabbitMqOptions> options,
         ImageProcessor processor,
         TaskStatusStore statusStore,
+        LifetimeStats lifetimeStats,
         ILogger<QueueConsumer> logger)
     {
         _options = options.Value;
         _processor = processor;
         _statusStore = statusStore;
+        _lifetimeStats = lifetimeStats;
         _logger = logger;
     }
 
@@ -124,6 +127,19 @@ public sealed class QueueConsumer : BackgroundService
                 Progress: 100,
                 ResultPath: resultPath,
                 Error: null));
+
+            // Lifetime stats: how much we processed and how many bytes saved.
+            try
+            {
+                var bytesIn  = new FileInfo(message.SourcePath).Length;
+                var bytesOut = new FileInfo(resultPath).Length;
+                await _lifetimeStats.RecordAsync(bytesIn, bytesOut);
+            }
+            catch (Exception statsEx)
+            {
+                // Stats are best-effort; never let them block the ack.
+                _logger.LogWarning(statsEx, "Failed to record lifetime stats for {TaskId}", message.TaskId);
+            }
 
             _channel!.BasicAck(ea.DeliveryTag, multiple: false);
         }
