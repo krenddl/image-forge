@@ -19,7 +19,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('download', 'upload', 'all')]
+    [ValidateSet('download', 'generate', 'upload', 'all')]
     [string]$Mode = 'all',
 
     [int]$Count       = 500,
@@ -27,7 +27,9 @@ param(
     [string]$PackDir  = '.\test-pack',
     [string]$ApiUrl   = 'http://localhost:8080',
     [string]$Format   = 'webp',
-    [int]$MaxDim      = 1280
+    [int]$MaxDim      = 1280,
+    [int]$GenWidth    = 3000,
+    [int]$GenHeight   = 2000
 )
 
 $ErrorActionPreference = 'Stop'
@@ -113,6 +115,67 @@ function Download-Pack {
     Note ("elapsed: {0}s" -f [int]$sw.Elapsed.TotalSeconds)
     Ok   ("fetched: $fetched, already had: $alreadyHave")
     if ($failed -gt 0) { Warn "failed: $failed (timeout / rate-limit?)" }
+}
+
+# --- generate (offline image pack via System.Drawing) ---------------------
+function Generate-Pack {
+    Section "Generate $Count synthetic $($GenWidth)x$($GenHeight) JPEGs -> $PackDir"
+    if (-not (Test-Path $PackDir)) { New-Item -ItemType Directory -Path $PackDir | Out-Null }
+
+    Add-Type -AssemblyName System.Drawing
+
+    $alreadyHave = 0
+    $needList = @()
+    for ($i = 1; $i -le $Count; $i++) {
+        $fname = Join-Path $PackDir ('img-{0:D4}.jpg' -f $i)
+        if ((Test-Path $fname) -and (Get-Item $fname).Length -gt 0) {
+            $alreadyHave++
+        } else {
+            $needList += [PSCustomObject]@{ Index = $i; Path = $fname }
+        }
+    }
+    Note ("need to generate {0}, already have {1}" -f $needList.Count, $alreadyHave)
+
+    if ($needList.Count -eq 0) {
+        Ok 'nothing to do'
+        return
+    }
+
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $generated = 0
+
+    foreach ($item in $needList) {
+        $rng = New-Object System.Random ($item.Index * 31 + 7)
+        $bmp = New-Object System.Drawing.Bitmap $GenWidth, $GenHeight
+        $g   = [System.Drawing.Graphics]::FromImage($bmp)
+
+        # Random-ish backdrop, then a few large blocks for visual interest.
+        $bgR = $rng.Next(40, 240); $bgG = $rng.Next(40, 240); $bgB = $rng.Next(40, 240)
+        $g.Clear([System.Drawing.Color]::FromArgb($bgR, $bgG, $bgB))
+
+        for ($k = 0; $k -lt 24; $k++) {
+            $r = $rng.Next(255); $gc = $rng.Next(255); $b = $rng.Next(255); $a = $rng.Next(120, 230)
+            $color = [System.Drawing.Color]::FromArgb($a, $r, $gc, $b)
+            $brush = New-Object System.Drawing.SolidBrush $color
+            $x = $rng.Next($GenWidth);  $y = $rng.Next($GenHeight)
+            $w = $rng.Next([int]($GenWidth/8), [int]($GenWidth/2))
+            $h = $rng.Next([int]($GenHeight/8), [int]($GenHeight/2))
+            $g.FillRectangle($brush, $x, $y, $w, $h)
+            $brush.Dispose()
+        }
+
+        $bmp.Save($item.Path, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+        $g.Dispose(); $bmp.Dispose()
+        $generated++
+
+        if ($generated % 25 -eq 0) {
+            Write-Host -NoNewline ("`r  {0,5} / {1}" -f $generated, $needList.Count) -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ''
+
+    Note ("elapsed: {0}s" -f [int]$sw.Elapsed.TotalSeconds)
+    Ok   ("generated: $generated, already had: $alreadyHave")
 }
 
 # --- upload -----------------------------------------------------------------
@@ -229,6 +292,7 @@ function Upload-Pack {
 # --- dispatcher --------------------------------------------------------------
 switch ($Mode) {
     'download' { Download-Pack }
+    'generate' { Generate-Pack }
     'upload'   { Upload-Pack   }
-    'all'      { Download-Pack; Upload-Pack }
+    'all'      { Generate-Pack; Upload-Pack }
 }
